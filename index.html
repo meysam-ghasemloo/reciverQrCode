@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.json"><meta name="theme-color" content="#111">
+<title>گیرنده QR</title>
+<style>
+body{font-family:sans-serif;text-align:center;margin:0;padding:12px;background:#111;color:#eee}
+video{width:100%;max-width:520px;border-radius:10px;background:#000}
+button,a.dl{font-size:18px;padding:12px 20px;margin:6px;border-radius:8px;border:0;background:#2a7;color:#fff;text-decoration:none;display:inline-block}
+#bar{height:12px;background:#444;border-radius:6px;overflow:hidden;margin:10px auto;max-width:520px}
+#bar div{height:100%;width:0;background:#4c8}
+</style></head><body>
+<h3>دریافت فایل از QR</h3>
+<button id="start">شروع اسکن</button><br>
+<video id="v" playsinline muted></video>
+<div id="st">آماده</div><div id="bar"><div></div></div><div id="res"></div>
+<script>
+const $=id=>document.getElementById(id);
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+function crc32(u){let t=crc32.t;if(!t){t=crc32.t=[];for(let n=0,c;n<256;n++){c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}}let r=-1;for(let i=0;i<u.length;i++)r=t[(r^u[i])&255]^(r>>>8);return (r^-1)>>>0;}
+function coefs(s,K){
+  const W=(K+31)>>5,c=new Uint32Array(W);
+  if(s<=K){c[(s-1)>>5]=1<<((s-1)&31);return c;}
+  let a=(Math.imul(s,2654435761)^Math.imul(K,40503))>>>0;
+  for(let i=0;i<W;i++){a=(a+0x6D2B79F5)>>>0;let t=a;t=Math.imul(t^(t>>>15),t|1);t^=t+Math.imul(t^(t>>>7),t|61);c[i]=(t^(t>>>14))>>>0;}
+  if(K&31)c[W-1]&=(1<<(K&31))-1;
+  if(!c.some(w=>w))c[0]=1;
+  return c;
+}
+function droplet(blocks,B,s){
+  const K=blocks.length,c=coefs(s,K),d=new Uint8Array(B);
+  for(let j=0;j<K;j++)if((c[j>>5]>>>(j&31))&1){const b=blocks[j];for(let i=0;i<B;i++)d[i]^=b[i];}
+  return d;
+}
+class Dec{
+  constructor(K){this.K=K;this.p=new Array(K).fill(null);this.rank=0;this.seen=new Set();}
+  add(s,d){
+    if(this.seen.has(s))return;this.seen.add(s);
+    const c=coefs(s,this.K),x=Uint8Array.from(d);
+    for(;;){
+      let j=-1;for(let w=0;w<c.length;w++)if(c[w]){j=w*32+31-Math.clz32(c[w]&-c[w]);break;}
+      if(j<0)return;
+      const r=this.p[j];
+      if(!r){this.p[j]={c,x};this.rank++;return;}
+      for(let w=0;w<c.length;w++)c[w]^=r.c[w];
+      for(let i=0;i<x.length;i++)x[i]^=r.x[i];
+    }
+  }
+  solve(){
+    const K=this.K,out=new Array(K);
+    for(let j=K-1;j>=0;j--){const r=this.p[j],x=r.x;
+      for(let k=j+1;k<K;k++)if((r.c[k>>5]>>>(k&31))&1)for(let i=0;i<x.length;i++)x[i]^=out[k][i];
+      out[j]=x;}
+    return out;
+  }
+}
+
+let meta=null,dec=null,got=0,done=false,stream=null,timer=null,busy=false;
+function handle(t){
+  if(done)return;
+  const a=t.split('|');if(a[0]!=='Q2'||a.length<9)return;
+  const key=a.slice(1,7).join('|');
+  if(!meta||meta.key!==key){meta={key,c:a[1],name:a[2],K:+a[3],len:+a[4],crc:+a[5],olen:+a[6]};dec=new Dec(meta.K);}
+  const bin=atob(a[8]),d=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++)d[i]=bin.charCodeAt(i);
+  dec.add(+a[7],d);
+  $('st').textContent=decodeURIComponent(meta.name)+' | '+dec.rank+' از '+meta.K;
+  $('bar').firstElementChild.style.width=(dec.rank/meta.K*100)+'%';
+  if(dec.rank===meta.K)finish();
+}
+async function finish(){
+  done=true;clearInterval(timer);
+  if(stream)stream.getTracks().forEach(t=>t.stop());
+  const B=dec.p[0].x.length,u8=new Uint8Array(meta.K*B);
+  dec.solve().forEach((b,i)=>u8.set(b,i*B));
+  let out=u8.subarray(0,meta.len);
+  if(meta.c==='1'){
+    const ds=new DecompressionStream('deflate-raw'),w=ds.writable.getWriter();w.write(out);w.close();
+    out=new Uint8Array(await new Response(ds.readable).arrayBuffer());
+  }
+  if(crc32(out)!==meta.crc){$('st').textContent='خطا: فایل سالم نیست، دوباره اسکن کن';done=false;meta=null;return;}
+  const name=decodeURIComponent(meta.name),a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([out]));a.download=name;a.className='dl';a.textContent='ذخیره: '+name;
+  $('st').textContent='فایل کامل شد ('+out.length+' بایت) و صحتش تأیید شد';
+  $('res').appendChild(a);a.click();
+}
+$('start').onclick=async()=>{
+  if(!('BarcodeDetector' in window)){$('st').textContent='از Chrome اندروید استفاده کن';return;}
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920}}});}
+  catch(e){$('st').textContent='خطای دوربین: '+e.message;return;}
+  const v=$('v');v.srcObject=stream;await v.play();
+  const det=new BarcodeDetector({formats:['qr_code']});
+  $('st').textContent='دوربین را روی QR نگه دار';
+  timer=setInterval(async()=>{
+    if(busy||done)return;busy=true;
+    try{(await det.detect(v)).forEach(x=>handle(x.rawValue));}catch(e){}
+    busy=false;
+  },60);
+};
+</script></body></html>
