@@ -10,7 +10,7 @@ button,a.dl{font-size:18px;padding:12px 20px;margin:6px;border-radius:8px;border
 #bar{height:12px;background:#444;border-radius:6px;overflow:hidden;margin:10px auto;max-width:520px}
 #bar div{height:100%;width:0;background:#4c8}
 </style></head><body>
-<h3>دریافت فایل از QR (نسخه ۴)</h3>
+<h3>دریافت فایل از QR (نسخه ۵)</h3>
 <button id="start">شروع اسکن</button><br>
 <video id="v" playsinline muted></video>
 <div id="st">آماده</div><div id="dbg" style="font-size:13px;color:#9cf;margin:6px"></div><div id="bar"><div></div></div><div id="res"></div>
@@ -56,22 +56,26 @@ class Dec{
   }
 }
 
-let meta=null,dec=null,valid=0,done=false,stream=null,timer=null,busy=false,S={found:0,bad:0,err:'',eng:''},cv=null,cx=null;
+const A45='0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:';
+function unb45(s){const o=[];let i=0;for(;i+2<s.length;i+=3){const x=A45.indexOf(s[i]),y=A45.indexOf(s[i+1]),z=A45.indexOf(s[i+2]),n=x+y*45+z*2025;if(x<0||y<0||z<0||n>65535)return null;o.push(n>>8,n&255);}
+  if(i<s.length){if(s.length-i!==2)return null;const x=A45.indexOf(s[i]),y=A45.indexOf(s[i+1]),n=x+y*45;if(x<0||y<0||n>255)return null;o.push(n);}return Uint8Array.from(o);}
+function dehex(h){const u=new Uint8Array(h.length>>1);for(let i=0;i<u.length;i++)u[i]=parseInt(h.substr(i*2,2),16);return new TextDecoder().decode(u);}
+function parseFrame(t){const p=[];let i=0;for(let k=0;k<8;k++){const j=t.indexOf(':',i);if(j<0)return null;p.push(t.slice(i,j));i=j+1;}p.push(t.slice(i));return p;}
+let meta=null,dec=null,valid=0,done=false,stream=null,timer=null,busy=false,running=false,S={found:0,bad:0,err:'',eng:''},cv=null,cx=null;
 function show(){
   const r=dec?dec.rank:0,K=meta?meta.K:0;
-  $('st').textContent=meta?decodeURIComponent(meta.name)+' | مفید: '+r+' از '+K+' ('+Math.floor(r/K*100)+'٪)':'در انتظار اولین QR معتبر...';
+  $('st').textContent=meta?meta.name+' | مفید: '+r+' از '+K+' ('+Math.floor(r/K*100)+'٪)':'در انتظار اولین QR معتبر...';
   $('bar').firstElementChild.style.width=(K?r/K*100:0)+'%';
   $('dbg').textContent='اسکن درست: '+valid+' | QR خوانده‌شده: '+S.found+' | نامعتبر: '+S.bad+(S.eng?' | موتور: '+S.eng:'')+(S.err?' | خطا: '+S.err:'');
 }
 function handle(t){
   if(done)return;
-  const a=t.split('|');
-  if(a[0]!=='Q2'||a.length<9){S.bad++;S.err='محتوای QR فرمت ما نیست: '+t.slice(0,12);return;}
-  const key=a.slice(1,7).join('|');
-  if(!meta||meta.key!==key){meta={key,c:a[1],name:a[2],K:+a[3],len:+a[4],crc:+a[5],olen:+a[6]};dec=new Dec(meta.K);valid=0;}
+  const a=parseFrame(t);
+  if(!a||a[0]!=='Q3'){S.bad++;S.err='محتوای QR فرمت ما نیست: '+t.slice(0,12);return;}
+  const key=a.slice(1,7).join(':');
+  if(!meta||meta.key!==key){meta={key,c:a[1],name:dehex(a[2]),K:+a[3],len:+a[4],crc:+a[5],olen:+a[6]};dec=new Dec(meta.K);valid=0;}
   const s=+a[7];if(dec.seen.has(s))return;
-  const bin=atob(a[8]),d=new Uint8Array(bin.length);
-  for(let i=0;i<bin.length;i++)d[i]=bin.charCodeAt(i);
+  const d=unb45(a[8]);if(!d){S.bad++;S.err='داده خراب';return;}
   dec.add(s,d);valid++;S.err='';show();
   if(dec.rank===meta.K)finish();
 }
@@ -86,7 +90,7 @@ async function finish(){
     out=new Uint8Array(await new Response(ds.readable).arrayBuffer());
   }
   if(crc32(out)!==meta.crc){$('st').textContent='خطا: فایل سالم نیست، دوباره اسکن کن';done=false;meta=null;dec=null;valid=0;return;}
-  const name=decodeURIComponent(meta.name),a=document.createElement('a');
+  const name=meta.name,a=document.createElement('a');
   a.href=URL.createObjectURL(new Blob([out]));a.download=name;a.className='dl';a.textContent='ذخیره: '+name;
   $('st').textContent='فایل کامل شد ('+out.length+' بایت) و صحتش تأیید شد';
   $('bar').firstElementChild.style.width='100%';
@@ -98,13 +102,10 @@ async function scan(v,det){
   if(det){try{res=(await det.detect(v)).map(x=>x.rawValue);if(res.length)S.eng='BarcodeDetector';}catch(e){S.err='detect: '+e.message;}}
   if(!res.length&&window.jsQR){
     if(!cv){cv=document.createElement('canvas');cx=cv.getContext('2d',{willReadFrequently:true});}
-    const sc=Math.min(1,1600/v.videoWidth),w=Math.round(v.videoWidth*sc),h=Math.round(v.videoHeight*sc),seenT=new Set();
+    const sc=Math.min(1,1000/v.videoWidth),w=Math.round(v.videoWidth*sc),h=Math.round(v.videoHeight*sc);
     cv.width=w;cv.height=h;cx.drawImage(v,0,0,w,h);
-    for(const [fx,fy,fw,fh] of [[0,0,1,1],[0,0,.6,.6],[.4,0,.6,.6],[0,.4,.6,.6],[.4,.4,.6,.6]]){
-      const x=Math.round(fx*w),y=Math.round(fy*h),tw=Math.round(fw*w),th=Math.round(fh*h);
-      const q=jsQR(cx.getImageData(x,y,tw,th).data,tw,th,{inversionAttempts:'dontInvert'});
-      if(q&&!seenT.has(q.data)){seenT.add(q.data);res.push(q.data);S.eng='jsQR';}
-    }
+    const q=jsQR(cx.getImageData(0,0,w,h).data,w,h,{inversionAttempts:'dontInvert'});
+    if(q){res=[q.data];S.eng='jsQR';}
   }
   res.forEach(t=>{S.found++;try{handle(t);}catch(e){S.err='handle: '+e.message;}});
   show();
@@ -117,11 +118,12 @@ $('start').onclick=async()=>{
   try{await stream.getVideoTracks()[0].applyConstraints({advanced:[{focusMode:'continuous'}]});}catch(e){}
   const v=$('v');v.srcObject=stream;await v.play();
   S.eng=det?'BarcodeDetector':'jsQR';show();
-  clearInterval(timer);
-  timer=setInterval(async()=>{
-    if(busy||done)return;busy=true;
-    try{await scan(v,det);}catch(e){S.err=e.message;}
-    busy=false;
-  },60);
+  if(running)return;running=true;
+  const step=async()=>{
+    if(done){running=false;return;}
+    if(!busy){busy=true;try{await scan(v,det);}catch(e){S.err=e.message;}busy=false;}
+    if(v.requestVideoFrameCallback)v.requestVideoFrameCallback(step);else setTimeout(step,30);
+  };
+  step();
 };
 </script></body></html>
