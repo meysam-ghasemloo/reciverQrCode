@@ -10,8 +10,8 @@ button,a.dl{font-size:18px;padding:12px 20px;margin:6px;border-radius:8px;border
 #bar{height:12px;background:#444;border-radius:6px;overflow:hidden;margin:10px auto;max-width:520px}
 #bar div{height:100%;width:0;background:#4c8}
 </style></head><body>
-<h3>دریافت فایل از QR (نسخه ۵)</h3>
-<button id="start">شروع اسکن</button><br>
+<h3>دریافت فایل از QR (نسخه ۶)</h3>
+<button id="start">شروع اسکن</button><br><label style="font-size:15px"><input type="checkbox" id="col"> حالت رنگی (فقط وقتی فرستنده رنگی است)</label><br>
 <video id="v" playsinline muted></video>
 <div id="st">آماده</div><div id="dbg" style="font-size:13px;color:#9cf;margin:6px"></div><div id="bar"><div></div></div><div id="res"></div>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
@@ -96,8 +96,31 @@ async function finish(){
   $('bar').firstElementChild.style.width='100%';
   $('res').appendChild(a);a.click();
 }
+async function scanColor(v,det){
+  if(!cv){cv=document.createElement('canvas');cx=cv.getContext('2d',{willReadFrequently:true});}
+  const sc=Math.min(1,1280/v.videoWidth),w=Math.round(v.videoWidth*sc),h=Math.round(v.videoHeight*sc);
+  cv.width=w;cv.height=h;cx.drawImage(v,0,0,w,h);
+  const d=cx.getImageData(0,0,w,h).data,res=[];
+  for(let ch=0;ch<3;ch++){
+    const hist=new Uint32Array(256);let tot=0;
+    for(let i=ch;i<d.length;i+=64){hist[d[i]]++;tot++;}
+    let acc=0,lo=0,hi=255;
+    for(let i=0;i<256;i++){acc+=hist[i];if(acc>=tot*0.02){lo=i;break;}}
+    acc=0;for(let i=255;i>=0;i--){acc+=hist[i];if(acc>=tot*0.02){hi=i;break;}}
+    const span=Math.max(30,hi-lo),o=new Uint8ClampedArray(d.length);
+    for(let i=0;i<d.length;i+=4){o[i]=o[i+1]=o[i+2]=(d[i+ch]-lo)*255/span;o[i+3]=255;}
+    let r=[];
+    if(det){try{r=(await det.detect(new ImageData(o,w,h))).map(x=>x.rawValue);}catch(e){S.err='detect: '+e.message;}}
+    if(!r.length&&window.jsQR){const q=jsQR(o,w,h,{inversionAttempts:'dontInvert'});if(q)r=[q.data];}
+    res.push(...r);
+  }
+  S.eng='رنگی';
+  res.forEach(t=>{S.found++;try{handle(t);}catch(e){S.err='handle: '+e.message;}});
+  show();
+}
 async function scan(v,det){
   if(v.readyState<2||!v.videoWidth)return;
+  if($('col').checked)return scanColor(v,det);
   let res=[];
   if(det){try{res=(await det.detect(v)).map(x=>x.rawValue);if(res.length)S.eng='BarcodeDetector';}catch(e){S.err='detect: '+e.message;}}
   if(!res.length&&window.jsQR){
