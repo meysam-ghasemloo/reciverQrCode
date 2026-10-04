@@ -10,7 +10,7 @@ button,a.dl{font-size:18px;padding:12px 20px;margin:6px;border-radius:8px;border
 #bar{height:12px;background:#444;border-radius:6px;overflow:hidden;margin:10px auto;max-width:520px}
 #bar div{height:100%;width:0;background:#4c8}
 </style></head><body>
-<h3>دریافت فایل از QR (نسخه ۳)</h3>
+<h3>دریافت فایل از QR (نسخه ۴)</h3>
 <button id="start">شروع اسکن</button><br>
 <video id="v" playsinline muted></video>
 <div id="st">آماده</div><div id="dbg" style="font-size:13px;color:#9cf;margin:6px"></div><div id="bar"><div></div></div><div id="res"></div>
@@ -98,10 +98,13 @@ async function scan(v,det){
   if(det){try{res=(await det.detect(v)).map(x=>x.rawValue);if(res.length)S.eng='BarcodeDetector';}catch(e){S.err='detect: '+e.message;}}
   if(!res.length&&window.jsQR){
     if(!cv){cv=document.createElement('canvas');cx=cv.getContext('2d',{willReadFrequently:true});}
-    const sc=Math.min(1,1000/v.videoWidth),w=Math.round(v.videoWidth*sc),h=Math.round(v.videoHeight*sc);
+    const sc=Math.min(1,1600/v.videoWidth),w=Math.round(v.videoWidth*sc),h=Math.round(v.videoHeight*sc),seenT=new Set();
     cv.width=w;cv.height=h;cx.drawImage(v,0,0,w,h);
-    const r=jsQR(cx.getImageData(0,0,w,h).data,w,h,{inversionAttempts:'dontInvert'});
-    if(r){res=[r.data];S.eng='jsQR';}
+    for(const [fx,fy,fw,fh] of [[0,0,1,1],[0,0,.6,.6],[.4,0,.6,.6],[0,.4,.6,.6],[.4,.4,.6,.6]]){
+      const x=Math.round(fx*w),y=Math.round(fy*h),tw=Math.round(fw*w),th=Math.round(fh*h);
+      const q=jsQR(cx.getImageData(x,y,tw,th).data,tw,th,{inversionAttempts:'dontInvert'});
+      if(q&&!seenT.has(q.data)){seenT.add(q.data);res.push(q.data);S.eng='jsQR';}
+    }
   }
   res.forEach(t=>{S.found++;try{handle(t);}catch(e){S.err='handle: '+e.message;}});
   show();
@@ -119,6 +122,6 @@ $('start').onclick=async()=>{
     if(busy||done)return;busy=true;
     try{await scan(v,det);}catch(e){S.err=e.message;}
     busy=false;
-  },100);
+  },60);
 };
 </script></body></html>
